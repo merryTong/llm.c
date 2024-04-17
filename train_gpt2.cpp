@@ -5,7 +5,7 @@
 
 using namespace std;
 
-vector<vector<float>> transpose(vector<vector<float>> A){
+vector<vector<float>> transpose(vector<vector<float>>& A){
     std::vector<std::vector<float>> AT;
     AT.resize(A[0].size());
     for(int i = 0; i < AT.size(); i++){
@@ -52,7 +52,7 @@ public:
         weight.resize(out_dim, vector<float>(in_dim));
         bias.resize(out_dim);
     }
-    vector<vector<vector<float>>> forward(vector<vector<vector<float>>> inputs){
+    vector<vector<vector<float>>>& forward(vector<vector<vector<float>>>& inputs){
         int B = inputs.size();
         int T = inputs[0].size();
         int C = inputs[0][0].size();
@@ -77,7 +77,7 @@ public:
         this->embedding_dim = embedding_dim;
         weight.resize(vocab_size, vector<float>(embedding_dim));
     }
-    vector<vector<vector<float>>> forward(vector<vector<int>> inputs){
+    vector<vector<vector<float>>>& forward(vector<vector<int>>& inputs){
         int B = inputs.size();
         int T = inputs[0].size();        
         vector<vector<vector<float>>> embedding(B, vector<vector<float>>(T, vector<float>(this->embedding_dim)));
@@ -102,7 +102,7 @@ public:
         gamma.resize(feature_size);
         beta.resize(feature_size);
     }
-    vector<vector<vector<float>>> forward(vector<vector<vector<float>>> inputs){
+    vector<vector<vector<float>>>& forward(vector<vector<vector<float>>>& inputs){
         int B = inputs.size();
         int T = inputs[0].size();
         int C = inputs[0][0].size();
@@ -146,16 +146,60 @@ public:
     LinearLayer* attn;
     LinearLayer* proj;
     SelfAttention(int embedding_dim, int num_head){
+        this->embedding_dim = embedding_dim;
+        this->num_head = num_head;
         LinearLayer attn(embedding_dim, embedding_dim*3);
         LinearLayer proj(embedding_dim, embedding_dim);
         this->attn = &attn;
         this->proj = &proj;
     }
-    vector<vector<vector<float>>> forward(vector<vector<vector<float>>> inputs){
+    vector<vector<vector<float>>>& forward(vector<vector<vector<float>>>& inputs){
         // input is (B, T, C) 
+        int B = inputs.size();
+        int T = inputs[0].size();
+        int C = inputs[0][0].size();   
+        int head_size = C / this->num_head;   
+        float scale = 1.0 / sqrtf(head_size);  
         vector<vector<vector<float>>> qkv = attn->forward(inputs);
         // qkv is (B, T, 3C) holding the query, key, value (Q, K, V) vectors
-
+        for(int b = 0; b < B; b++){
+            for(int nh = 0; nh < this->num_head; nh++){
+                vector<vector<float>> q_head(T), k_head(T) ,v_head(T);
+                // split q_head,k_head,v_head
+                for(int t = 0; t < T; t++){
+                    q_head[t].assign(qkv[b][t].begin()+(nh*head_size), qkv[b][t].begin()+(nh*head_size+head_size));
+                    k_head[t].assign(qkv[b][t].begin()+(nh*head_size+C), qkv[b][t].begin()+(nh*head_size+head_size+C));
+                    v_head[t].assign(qkv[b][t].begin()+(nh*head_size+2*C), qkv[b][t].begin()+(nh*head_size+head_size+2*C));
+                }
+                // calculate query dot key
+                vector<float> bias;
+                k_head = transpose(k_head);
+                vector<vector<float>> pre_attn = matmult(q_head, k_head, bias);
+                float maxval = -10000.0f;
+                for(int i = 0; i < T; i++){
+                    // lower triangular
+                    for(int j = 0; j <= i; j++){ 
+                        // calculate scaled pre_attn
+                        pre_attn[i][j] *= scale; 
+                        // calculate maxval
+                        if(pre_attn[i][j] > maxval) maxval = pre_attn[i][j];
+                    }
+                }
+                // calculate the exp and keep track of sum
+                // maxval is being calculated and subtracted only for numerical stability
+                float expsum = 0.0f;
+                vector<vector<float>> post_attn(T, vector<float>(T));                
+                for(int i = 0; i < T; i++){
+                    // lower triangular
+                    for(int j = 0; j <= i; j++){ 
+                        float expv = expf(pre_attn[i][j] - maxval);
+                        expsum += expv;
+                        post_attn[i][j] = expv;
+                    }
+                }
+                float expsum_inv = expsum == 0.0f ? 0.0f : 1.0f / expsum;
+            }
+        }
     }
 };
 
