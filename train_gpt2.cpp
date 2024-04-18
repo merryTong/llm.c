@@ -161,6 +161,7 @@ public:
         int head_size = C / this->num_head;   
         float scale = 1.0 / sqrtf(head_size);  
         vector<vector<vector<float>>> qkv = attn->forward(inputs);
+        vector<vector<vector<float>>> out(B, vector<vector<float>>(T, vector<float>(C)));
         // qkv is (B, T, 3C) holding the query, key, value (Q, K, V) vectors
         for(int b = 0; b < B; b++){
             for(int nh = 0; nh < this->num_head; nh++){
@@ -172,7 +173,7 @@ public:
                     v_head[t].assign(qkv[b][t].begin()+(nh*head_size+2*C), qkv[b][t].begin()+(nh*head_size+head_size+2*C));
                 }
                 // calculate query dot key
-                vector<float> bias;
+                vector<float> bias(T, 0.0f);
                 k_head = transpose(k_head);
                 vector<vector<float>> pre_attn = matmult(q_head, k_head, bias);
                 float maxval = -10000.0f;
@@ -187,19 +188,35 @@ public:
                 }
                 // calculate the exp and keep track of sum
                 // maxval is being calculated and subtracted only for numerical stability
-                float expsum = 0.0f;
+                // normalize to get the softmax
                 vector<vector<float>> post_attn(T, vector<float>(T));                
                 for(int i = 0; i < T; i++){
                     // lower triangular
+                    float expsum = 0.0f;
                     for(int j = 0; j <= i; j++){ 
                         float expv = expf(pre_attn[i][j] - maxval);
                         expsum += expv;
                         post_attn[i][j] = expv;
                     }
+                    float expsum_inv = expsum == 0.0f ? 0.0f : 1.0f / expsum;
+                    for(int j = 0; j < T; j++){ 
+                        if (j <= i){
+                            post_attn[i][j] *= expsum_inv;
+                        }
+                        else{
+                            post_attn[i][j] = 0.0f;
+                        }
+                    }
                 }
-                float expsum_inv = expsum == 0.0f ? 0.0f : 1.0f / expsum;
+                bias.assign(T, 0.0f);
+                vector<vector<float>> res = matmult(post_attn, v_head, bias);
+                for(int t = 0; t < T; t++){
+                    out[b][t].insert(out[b][t].begin()+(nh*head_size), res[t].begin(), res[t].end());
+                }
             }
         }
+        vector<vector<vector<float>>> attn_proj = proj->forward(out);
+        return attn_proj;
     }
 };
 
