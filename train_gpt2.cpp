@@ -310,6 +310,66 @@ public:
     }
 };
 
+class CrossEntropy{
+private:
+    vector<vector<vector<float>>> probs;
+    vector<vector<int>> targets;
+public:
+    CrossEntropy(){}
+    vector<vector<vector<float>>>& softmax(vector<vector<vector<float>>>& logits){
+        // input: logits is (B,T,V) of the unnormalized log probabilities
+        int B = logits.size();
+        int T = logits[0].size();
+        int V = logits[0][0].size();   
+        vector<vector<vector<float>>> probs(B, vector<vector<float>>(T, vector<float>(V)));
+        for(int b = 0; b < B; b++){
+            for(int t = 0; t < T; t++){
+                // maxval is only calculated and subtracted for numerical stability
+                float maxval = -10000.0f; // TODO something better
+                for (int i = 0; i < V; i++) {
+                    if (logits[b][t][i] > maxval) {
+                        maxval = logits[b][t][i];
+                    }
+                }
+                float sum = 0.0f;
+                for (int i = 0; i < V; i++) {
+                    probs[b][t][i] = expf(logits[b][t][i] - maxval);
+                    sum += probs[b][t][i];
+                }
+                for (int i = 0; i < V; i++) {
+                    probs[b][t][i] /= sum;
+                }
+            }
+        }
+    }
+    vector<vector<vector<float>>> forward(vector<vector<vector<float>>>& logits, vector<vector<int>>& targets){
+        // targets is (B,T) of integers giving the correct index in logits
+        int B = logits.size();
+        int T = logits[0].size();
+        this->probs = softmax(logits);
+        this->targets = targets;
+        vector<vector<float>> losses(B, vector<float>(T));
+        for(int b = 0; b < B; b++){
+            for(int t = 0; t < T; t++){
+                int idx = targets[b][t];
+                losses[b][t] = -logf(probs[b][t][idx]);
+            }
+            
+        }
+    }
+    vector<vector<vector<float>>> backward(vector<vector<float>> dlosses){
+        int B = dlosses.size();
+        int T = dlosses[0].size();        
+        vector<vector<vector<float>>> outs(B, vector<vector<float>>(T, vector<float>(V)));
+        for (int b = 0; b < B; b++) {
+            for (int t = 0; t < T; t++) {
+                float dloss = dlosses[b][t];
+
+            }
+        }
+    }
+};
+
 struct GPT2Config{
     int max_seq_len; // max sequence length, e.g. 1024
     int vocab_size; // vocab size, e.g. 50257
@@ -339,10 +399,22 @@ public:
         LayerNorm ln_f(config.channels);
         this->ln_f = &ln_f;
         LinearLayer lm_head(config.channels, config.vocab_size);
+        lm_head.weight = tokenizer.weight;
         this->lm_head = &lm_head;
     }
-    vector<vector<vector<float>>> forward(vector<vector<vector<float>>>& inputs){
-        
+    vector<vector<vector<float>>> forward(vector<vector<int>>& inputs){
+        vector<vector<vector<float>>> tok_emb = tokenizer->forward(inputs);
+        vector<vector<vector<float>>> pos_emb = position->forward(inputs);
+        vector<vector<vector<float>>> x(inputs.size());
+        for(int i = 0; i < inputs.size(); i++){
+            x[i] = addition(tok_emb[i], pos_emb[i]);
+        }       
+        for(int l = 0; l < config.num_layers; l++){
+            x = blocks[l]->forward(x);
+        }
+        x = ln_f->forward(x);
+        x = lm_head->forward(x);
+        return x;
     }
 };
 
