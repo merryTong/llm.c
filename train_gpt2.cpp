@@ -6,7 +6,7 @@
 using namespace std;
 
 vector<vector<float>> transpose(vector<vector<float>>& A){
-    std::vector<std::vector<float>> AT;
+    vector<vector<float>> AT;
     AT.resize(A[0].size());
     for(int i = 0; i < AT.size(); i++){
         AT[i].resize(A.size());
@@ -19,7 +19,20 @@ vector<vector<float>> transpose(vector<vector<float>>& A){
     }
     return AT;
 }
-
+vector<vector<float>> addition(vector<vector<float>> A, vector<vector<float>> B){
+    vector<vector<float>> C;
+    C.resize(A.size());
+    for(int i = 0; i < C.size(); i++){
+        C[i].resize(A[0].size());
+    }
+    
+    for(int i = 0; i < A.size(); i++){
+        for(int j = 0; j < A[0].size(); j++){
+            C[i][j] = A[i][j] + B[i][j];
+        }
+    }
+    return C;
+}
 vector<vector<float>> matmult(vector<vector<float>>& matrix, vector<vector<float>>& weight, vector<float>& bias){
     // matrix is (C,T), weight is (OC, C), bias is (OC)
     // out is (OC,T)
@@ -135,17 +148,38 @@ public:
 };
 
 class GeLU{
-
+private:
+    float scale_factor = sqrtf(2.0f / M_PI);
+    float constant = 0.044715f;
+public:
+    GeLU(){}
+    vector<vector<vector<float>>>& forward(vector<vector<vector<float>>>& inputs){
+        // inputs is (B,T,4C)
+        int B = inputs.size();
+        int T = inputs[0].size();
+        int C4 = inputs[0][0].size();         
+        vector<vector<vector<float>>> outs(B, vector<vector<float>>(T, vector<float>(C4)));
+        for(int b = 0; b < B; b++){
+            for(int t = 0; t < T; t++){
+                for(int c = 0; c < C4; c++){
+                    float x = inputs[b][t][c];
+                    float cube = constant * x * x * x;
+                    outs[b][t][c] = 0.5f * x * (1.0f + tanhf(scale_factor * (x + cube)));
+                }
+            }
+        }
+        return outs;
+    }
 };
 
-class SelfAttention{
+class MultiHeadSelfAttention{
 private:
     int embedding_dim;
     int num_head;
 public:
     LinearLayer* attn;
     LinearLayer* proj;
-    SelfAttention(int embedding_dim, int num_head){
+    MultiHeadSelfAttention(int embedding_dim, int num_head){
         this->embedding_dim = embedding_dim;
         this->num_head = num_head;
         LinearLayer attn(embedding_dim, embedding_dim*3);
@@ -220,6 +254,62 @@ public:
     }
 };
 
+class MLP{
+private:
+    int n_embed;
+    LinearLayer* c_fc;
+    LinearLayer* c_proj;
+    GeLU* gelu;
+public:
+    MLP(int n_embed){
+        this->n_embed = n_embed;
+        LinearLayer c_fc(n_embed, 4*n_embed);
+        LinearLayer c_proj(4*n_embed, n_embed);
+        this->c_fc = &c_fc;
+        this->c_proj = &c_proj;
+        GeLU gelu;
+        this->gelu = &gelu;
+        int abc = 0;
+    }
+    vector<vector<vector<float>>>& forward(vector<vector<vector<float>>>& inputs){
+        vector<vector<vector<float>>> x = c_fc->forward(inputs);
+        x = gelu->forward(x);
+        x = c_proj->forward(x);
+
+        return x;
+    }
+};
+
+class Block{
+private:
+    LayerNorm* ln_1;
+    LayerNorm* ln_2;
+    MultiHeadSelfAttention* msa;
+    MLP* mlp;
+public:
+    Block(int embedding_dim, int num_head){
+        LayerNorm ln_1(embedding_dim);
+        LayerNorm ln_2(embedding_dim);
+        this->ln_1 = &ln_1;
+        this->ln_2 = &ln_2;
+        MultiHeadSelfAttention msa(embedding_dim, num_head);
+        this->msa = &msa;
+        MLP mlp(embedding_dim);
+        this->mlp = &mlp;
+    }
+    vector<vector<vector<float>>> forward(vector<vector<vector<float>>>& inputs){
+        vector<vector<vector<float>>> x = msa->forward(ln_1->forward(inputs));
+        for(int i = 0; i < inputs.size(); i++){
+            x[i] = addition(inputs[i], x[i]);
+        }
+        vector<vector<vector<float>>> outs = mlp->forward(ln_2->forward(x));
+        for(int i = 0; i < inputs.size(); i++){
+            outs[i] = addition(x[i], outs[i]);
+        }       
+        return outs; 
+    }
+};
+
 struct GPT2Config{
     int max_seq_len; // max sequence length, e.g. 1024
     int vocab_size; // vocab size, e.g. 50257
@@ -230,7 +320,30 @@ struct GPT2Config{
 class GPT2{
 public:
     GPT2Config config;
-
+    EmbeddingLayer* tokenizer;
+    EmbeddingLayer* position;
+    vector<Block*> blocks;
+    LayerNorm* ln_f;
+    LinearLayer* lm_head;
+    GPT2(GPT2Config& config){
+        this->config = config;
+        EmbeddingLayer tokenizer(config.vocab_size, config.channels);
+        EmbeddingLayer position(config.max_seq_len, config.channels);
+        this->tokenizer = &tokenizer;
+        this->position = &position;
+        blocks.resize(config.num_layers);
+        for(int l = 0; l < config.num_layers; l++){
+            Block block(config.channels, config.num_heads);
+            blocks[l] = &block;
+        }
+        LayerNorm ln_f(config.channels);
+        this->ln_f = &ln_f;
+        LinearLayer lm_head(config.channels, config.vocab_size);
+        this->lm_head = &lm_head;
+    }
+    vector<vector<vector<float>>> forward(vector<vector<vector<float>>>& inputs){
+        
+    }
 };
 
 void load_checkpoint(string checkpoint_path, GPT2& model){
