@@ -271,7 +271,7 @@ public:
         this->gelu = &gelu;
         int abc = 0;
     }
-    vector<vector<vector<float>>>& forward(vector<vector<vector<float>>>& inputs){
+    vector<vector<vector<float>>> forward(vector<vector<vector<float>>>& inputs){
         vector<vector<vector<float>>> x = c_fc->forward(inputs);
         x = gelu->forward(x);
         x = c_proj->forward(x);
@@ -316,7 +316,7 @@ private:
     vector<vector<int>> targets;
 public:
     CrossEntropy(){}
-    vector<vector<vector<float>>>& softmax(vector<vector<vector<float>>>& logits){
+    vector<vector<vector<float>>> softmax(vector<vector<vector<float>>>& logits){
         // input: logits is (B,T,V) of the unnormalized log probabilities
         int B = logits.size();
         int T = logits[0].size();
@@ -340,14 +340,17 @@ public:
                     probs[b][t][i] /= sum;
                 }
             }
-        }
+        }        
+        return probs;
     }
-    vector<vector<vector<float>>> forward(vector<vector<vector<float>>>& logits, vector<vector<int>>& targets){
+    vector<vector<float>> forward(vector<vector<vector<float>>>& logits, 
+                                    vector<vector<int>>& targets){
         // targets is (B,T) of integers giving the correct index in logits
         int B = logits.size();
         int T = logits[0].size();
         this->probs = softmax(logits);
         this->targets = targets;
+        // output: losses is (B,T) of the individual losses at each position
         vector<vector<float>> losses(B, vector<float>(T));
         for(int b = 0; b < B; b++){
             for(int t = 0; t < T; t++){
@@ -356,17 +359,24 @@ public:
             }
             
         }
+        return losses;
     }
-    vector<vector<vector<float>>> backward(vector<vector<float>> dlosses){
-        int B = dlosses.size();
-        int T = dlosses[0].size();        
-        vector<vector<vector<float>>> outs(B, vector<vector<float>>(T, vector<float>(V)));
+    vector<vector<vector<float>>> backward(vector<vector<float>>& dlosses){
+        int B = this->probs.size();
+        int T = this->probs[0].size();    
+        int V = this->probs[0][0].size();        
+        vector<vector<vector<float>>> dlogits(B, vector<vector<float>>(T, vector<float>(V)));
         for (int b = 0; b < B; b++) {
             for (int t = 0; t < T; t++) {
                 float dloss = dlosses[b][t];
-
+                int idx = this->targets[b][t];
+                for(int i = 0; i < V; i++){
+                    float indicator = i == idx ? 1.0f : 0.0f;
+                    dlogits[b][t][i] += (this->probs[b][t][i] - indicator) * dloss;
+                }
             }
         }
+        return dlogits;
     }
 };
 
