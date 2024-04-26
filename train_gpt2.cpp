@@ -56,19 +56,21 @@ class LinearLayer{
 private:
     int in_dim;
     int out_dim;
-public:
+    vector<vector<vector<float>>> inputs;
     vector<vector<float>> weight;
     vector<float> bias;
+public:
     LinearLayer(int in_dim, int out_dim){
         this->in_dim = in_dim;
         this->out_dim = out_dim;
         weight.resize(out_dim, vector<float>(in_dim));
         bias.resize(out_dim);
     }
-    vector<vector<vector<float>>>& forward(vector<vector<vector<float>>>& inputs){
+    vector<vector<vector<float>>> forward(vector<vector<vector<float>>>& inputs){
         int B = inputs.size();
         int T = inputs[0].size();
         int C = inputs[0][0].size();
+        this->inputs = inputs;
         vector<vector<vector<float>>> out;
         for(int b = 0; b < B; b++){
             vector<vector<float>> input_transpose = transpose(inputs[b]);
@@ -76,6 +78,15 @@ public:
             out.push_back(transpose(res));
         }
         return out;
+    }
+    vector<vector<vector<float>>> backward(vector<vector<vector<float>>>& douts){
+        int B = inputs.size();
+        int T = inputs[0].size();
+        int C = inputs[0][0].size();        
+        vector<vector<vector<float>>> dinputs(B, vector<vector<float>>(T, vector<float>(in_dim)));
+        for(int b = 0; b < B; b++){
+            
+        }
     }
 };
 
